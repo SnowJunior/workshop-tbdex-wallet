@@ -6,30 +6,30 @@ import { Jwt, PresentationExchange } from '@web5/credentials'
 // TODO 1: Choose Mock PFI DIDs using info about services they provide.
 const mockProviderDids = {
   aquafinance_capital: {
-    uri: 'did:dht:qewzcx3fj8uuq7y551deqdfd1wbe6ymicr8xnua3xzkdw4n6j3bo',
-    name: 'AquaFinance Capital',
-    description: 'Provides exchanges with the Ghanaian Cedis: GHS to USDC, GHS to KES'
+    uri: 'did:dht:kdqnzqsoedntcfmcgrxshr7ek93ep1eznfxn1wnkreyy9reewa9o',
+    name: 'Piggy bank Capital',
+    description: 'Provides exchanges with the Ghanaian Cedis: USDC, GHS to KES'
   },
-  swiftliquidity_solutions: {
-    uri: 'did:dht:zz3m6ph36p1d8qioqfhp5dh5j6xn49cequ1yw9jnfxbz1uyfnddy',
-    name: 'SwiftLiquidity Solutions',
-    description: 'Offers exchange rates with the South African Rand: ZAR to BTC and EUR to ZAR.'
-  },
-  flowback_financial: {
-    uri: 'did:dht:gxwaxgihty7ar5u44gcmmdbw4ka1rbpj8agu4fom6tmsaz7aoffo',
-    name: 'Flowback Financial',
-    description: 'Offers international rates with various currencies - USD to GBP, GBP to CAD.'
-  },
-  vertex_liquid_assets: {
-    uri: 'did:dht:7zkzxjf84xuy6icw6fyjcn3uw14fty4umqd3nc4f8ih881h6bjby',
-    name: 'Vertex Liquid Assets',
-    description: 'Offers currency exchanges between African currencies - MAD to EGP, GHS to NGN.'
-  },
-  titanium_trust: {
-    uri: 'did:dht:kuggrw7nx3n4ehz455stdkdeuaekfjimhnbenpo8t4xz9gb8qzyy',
-    name: 'Titanium Trust',
-    description: 'Provides offerings to exchange USD to African currencies - USD to GHS, USD to KES.'
-  }
+  // swiftliquidity_solutions: {
+  //   uri: 'did:dht:zz3m6ph36p1d8qioqfhp5dh5j6xn49cequ1yw9jnfxbz1uyfnddy',
+  //   name: 'SwiftLiquidity Solutions',
+  //   description: 'Offers exchange rates with the South African Rand: ZAR to BTC and EUR to ZAR.'
+  // },
+  // flowback_financial: {
+  //   uri: 'did:dht:gxwaxgihty7ar5u44gcmmdbw4ka1rbpj8agu4fom6tmsaz7aoffo',
+  //   name: 'Flowback Financial',
+  //   description: 'Offers international rates with various currencies - USD to GBP, GBP to CAD.'
+  // },
+  // // vertex_liquid_assets: {
+  // //   uri: 'did:dht:7zkzxjf84xuy6icw6fyjcn3uw14fty4umqd3nc4f8ih881h6bjby',
+  // //   name: 'Vertex Liquid Assets',
+  // //   description: 'Offers currency exchanges between African currencies - MAD to EGP, GHS to NGN.'
+  // // },
+  // titanium_trust: {
+  //   uri: 'did:dht:kuggrw7nx3n4ehz455stdkdeuaekfjimhnbenpo8t4xz9gb8qzyy',
+  //   name: 'Titanium Trust',
+  //   description: 'Provides offerings to exchange USD to African currencies - USD to GHS, USD to KES.'
+  // }
   // TODO 11: Surprise surprise.
 };
 
@@ -58,7 +58,10 @@ export const useStore = () => {
       for (const pfi of state.pfiAllowlist) {
         const pfiUri = pfi.pfiUri
         // TODO 2: Fetch offerings from PFIs
-        const offerings = []
+        const offerings = await TbdexHttpClient.getOfferings({
+          pfiDid: pfiUri
+        })
+        console.log('offerings', offerings)
         allOfferings.push(...offerings)
       }
 
@@ -71,13 +74,36 @@ export const useStore = () => {
 
   const createExchange = async (offering, amount, payoutPaymentDetails) => {
     // TODO 3: Choose only needed credentials to present using PresentationExchange.selectCredentials
-    const selectedCredentials = []
+    const selectedCredentials = PresentationExchange.selectCredentials({
+      vcJwts: state.customerCredentials,
+      presentationDefinition: offering.data.requiredClaims
+    })
 
     // TODO 4: Create RFQ message to Request for a Quote
-    const rfq = {}
+    const rfq = Rfq.create({
+      metadata: {
+        from: state.customerDid.uri,
+        to: offering.metadata.from,
+        protocol: '1.0'
+      },
+      data: {
+        offeringId: offering.id,
+        payin: {
+          amount: amount.toString(),
+          kind: offering.data.payin.methods[0].kind,
+          paymentDetails: {},
+        },
+        payout: {
+          kind: offering.data.payout.methods[0].kind,
+          paymentDetails: payoutPaymentDetails,
+        },
+        claims: selectedCredentials
+      }
+    })
 
     try{
       // TODO 5: Verify offering requirements with RFQ - rfq.verifyOfferingRequirements(offering)
+      rfq.verifyOfferingRequirements(offering)
 
     } catch (e) {
       // handle failed verification
@@ -85,11 +111,12 @@ export const useStore = () => {
     }
 
     // TODO 6: Sign RFQ message
-
+    await rfq.sign(state.customerDid)
     console.log('RFQ:', rfq)
 
     try {
       // TODO 7: Submit RFQ message to the PFI .createExchange(rfq)
+      await TbdexHttpClient.createExchange(rfq)
     }
     catch (error) {
       console.error('Failed to create exchange:', error);
@@ -99,7 +126,10 @@ export const useStore = () => {
   const fetchExchanges = async (pfiUri) => {
     try {
       // TODO 8: get exchanges from the PFI
-      const exchanges = []
+      const exchanges = await TbdexHttpClient.getExchanges({
+        pfiDid: pfiUri,
+        did: state.customerDid
+      })
 
       const mappedExchanges = formatMessages(exchanges)
       return mappedExchanges
@@ -110,10 +140,23 @@ export const useStore = () => {
 
   const addClose = async (exchangeId, pfiUri, reason) => {
     // TODO 9: Create Close message, sign it, and submit it to the PFI
-    const close = {}
+    const close = Close.create({
+      metadata: {
+        from: state.customerDid.uri,
+        to: pfiUri,
+        exchangeId: exchangeId,
+        protocol: '1.0'
+      },
+      data: {
+        reason: reason
+      }
+    })
+
+    await close.sign(state.customerDid)
 
     try {
       // send Close message
+     await TbdexHttpClient.submitClose(close)
     }
     catch (error) {
       console.error('Failed to close exchange:', error);
@@ -122,10 +165,20 @@ export const useStore = () => {
 
   const addOrder = async (exchangeId, pfiUri) => {
     // TODO 10: Create Order message, sign it, and submit it to the PFI
-    const order = {}
+    const order = Order.create({
+      metadata: {
+        from: state.customerDid.uri,
+        to: pfiUri,
+        exchangeId: exchangeId,
+        protocol: '1.0'
+      }, 
+    })
+
+    await order.sign(state.customerDid)
 
     try {
       // Send order message
+      await TbdexHttpClient.submitOrder(order)
 
     } catch (error) {
       console.error('Failed to submit order:', error);
